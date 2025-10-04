@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Mobile Plane Shooter</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<style>
+  html,body { height:100%; margin:0; background:#000; overflow:hidden; }
+  canvas { display:block; touch-action:none; }
+  #hud { 
+    position:fixed; 
+    top:10px; 
+    left:10px; 
+    color:#fff; 
+    font-family:Arial; 
+    font-size:18px; 
+    display:none; 
+    z-index:100;
+  }
+  #highScoreHud { margin-bottom:5px; }
+  .btn { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:18px 32px; font-size:20px; font-weight:bold; border-radius:10px; border:none; background:#ff4d4d; color:#fff; cursor:pointer; }
+  
+  #restartBtn { 
+    display:none; 
+    position:fixed; 
+    left:50%; 
+    transform:translateX(-50%); 
+    padding:14px 28px; 
+    font-size:20px; 
+    font-weight:bold; 
+    border-radius:10px; 
+    border:none; 
+    background:#ff4d4d; 
+    color:#fff; 
+    cursor:pointer;
+  }
+
+  #backBtn { 
+    position:fixed; 
+    top:10px; 
+    right:10px; 
+    font-size:22px; 
+    padding:8px 12px; 
+    border:none; 
+    border-radius:50%; 
+    background:#333; 
+    color:#fff; 
+    cursor:pointer; 
+    display:none; 
+    z-index:50;
+  }
+
+  #pauseMenu { 
+    position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); display:none; 
+    flex-direction:column; align-items:center; justify-content:center; z-index:20; 
+  }
+  #pauseMenu button { margin:10px; padding:12px 28px; font-size:20px; border:none; border-radius:10px; background:#ff4d4d; color:#fff; cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="highScoreHud">High Score: 0</div>
+  <div id="scoreHud">Score: 0</div>
+</div>
+
+<button id="playBtn" class="btn">PLAY</button>
+<button id="restartBtn" class="btn">RESTART</button>
+<button id="backBtn">&#8592;</button> <!-- Back Arrow -->
+
+<!-- Pause Menu -->
+<div id="pauseMenu">
+  <button id="resumeBtn">Resume</button>
+  <button id="menuRestartBtn">Restart</button>
+  <button id="exitBtn">Exit</button>
+</div>
+
+<!-- Home Screen -->
+<div id="home" style="position:absolute; top:0; left:0; width:100%; height:100%; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:10;">
+  <img src="plane.png" alt="Plane Image" style="width:150px; margin-bottom:10px;">
+  <h1 style="color:#fff; margin-bottom:10px;">Plane Shooter</h1>
+  <h2 id="highScoreText" style="color:#ff0; margin-bottom:20px;">High Score: 0</h2>
+  <button id="homePlayBtn" style="margin:10px; padding:12px 28px; font-size:20px; border:none; border-radius:10px; background:#ff4d4d; color:#fff; cursor:pointer;">Play</button>
+  <button id="storeBtn" style="margin:10px; padding:12px 28px; font-size:20px; border:none; border-radius:10px; background:#4d94ff; color:#fff; cursor:pointer;">Store</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const home = document.getElementById('home');
+const homePlayBtn = document.getElementById('homePlayBtn');
+const storeBtn = document.getElementById('storeBtn');
+const highScoreText = document.getElementById('highScoreText');
+
+let highScore = localStorage.getItem("planeHighScore") || 0;
+highScoreText.textContent = "High Score: " + highScore;
+
+homePlayBtn.addEventListener('click', () => {
+  home.style.display = 'none';
+  document.getElementById('playBtn').click();
+});
+storeBtn.addEventListener('click', () => { alert("Store coming soon!"); });
+
+(() => {
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const scoreHud = document.getElementById('scoreHud');
+const highScoreHud = document.getElementById('highScoreHud');
+const playBtn = document.getElementById('playBtn');
+const restartBtn = document.getElementById('restartBtn');
+const backBtn = document.getElementById('backBtn');
+const pauseMenu = document.getElementById('pauseMenu');
+const resumeBtn = document.getElementById('resumeBtn');
+const menuRestartBtn = document.getElementById('menuRestartBtn');
+const exitBtn = document.getElementById('exitBtn');
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
+
+// --- Load Images ---
+const playerImg = new Image(); playerImg.src = "player.png";
+const bulletImg = new Image(); bulletImg.src = "bullet.png";
+const enemyImg = new Image(); enemyImg.src = "enemy.png";
+
+// --- Load Sounds ---
+const shootSound = new Audio("shoot.mp3");
+const explosionSound = new Audio("explosion.mp3");
+const bgMusic = new Audio("bgmusic.mp3");
+bgMusic.loop = true;
+bgMusic.volume = 0.5;
+
+// --- Player ---
+const player = { 
+  w: canvas.width * 0.12,   
+  h: canvas.height * 0.12, 
+  speed: Math.max(6, canvas.width * 0.012) 
+};
+resetPlayer();
+
+// --- Entities ---
+let bullets = [], enemies = [], score=0, gameOver=false, fireCooldown=0;
+const fireRate = 250; 
+let running=false;
+let paused=false;
+
+// --- Input ---
+let keys = {};
+window.addEventListener('keydown', e => { keys[e.code]=true; });
+window.addEventListener('keyup', e => { keys[e.code]=false; });
+
+let touchActive=false, touchX=0;
+canvas.addEventListener('touchstart', e=>{ if(!running) return; touchActive=true; touchX=e.touches[0].clientX; });
+canvas.addEventListener('touchmove', e=>{ if(!running || !touchActive) return; touchX=e.touches[0].clientX; });
+canvas.addEventListener('touchend', ()=>{ touchActive=false; });
+
+// --- Player & Game ---
+function resetPlayer(){ player.x = canvas.width/2; player.y = canvas.height - player.h*1.5; }
+
+function resetGame(){
+  bullets=[]; enemies=[]; score=0; gameOver=false; fireCooldown=0; paused=false;
+  resetPlayer(); restartBtn.style.display="none"; 
+  scoreHud.textContent="Score: 0"; 
+  highScoreHud.textContent="High Score: " + highScore;
+  hud.style.display="block";
+  running=true; 
+  backBtn.style.display="block";
+
+  // Start background music
+  bgMusic.currentTime = 0;
+  bgMusic.play();
+
+  requestAnimationFrame(loop);
+}
+
+// --- Fire ---
+function tryFire(){
+  if(fireCooldown<=0 && !gameOver && running && !paused){
+    bullets.push({ 
+      x: player.x, 
+      y: player.y - player.h/2, 
+      w: player.w * 0.25,   
+      h: player.h * 0.5,    
+      speed: player.speed * 2.5 
+    });
+    fireCooldown = fireRate;
+
+    // 🔊 Shooting sound
+    shootSound.currentTime = 0;
+    shootSound.play();
+  }
+}
+
+// --- Enemy Spawner ---
+setInterval(()=>{
+  if(!running || gameOver || paused) return;
+  const ex = Math.random()*(canvas.width-60)+30;
+
+  // 🔥 Progressive difficulty (slower growth)
+  const baseSpeed = 2 + Math.random()*2;   // 2–4 speed initially
+  const timeFactor = score / 200;          // every 200 points = +1 speed approx.
+  const enemySpeed = baseSpeed + timeFactor;
+
+  enemies.push({ 
+    x: ex, 
+    y: -40, 
+    w: player.w * 1.2,   
+    h: player.h * 1.2, 
+    speed: enemySpeed
+  });
+},1000);
+
+// --- Loop ---
+let last = performance.now();
+function loop(now){
+  const dt = now - last; last = now;
+  if(running && !paused){ update(dt); draw(); if(!gameOver) requestAnimationFrame(loop); }
+}
+
+// --- Update ---
+function update(dt){
+  if(fireCooldown>0) fireCooldown -= dt;
+  tryFire();
+
+  if(keys["ArrowLeft"] || keys["KeyA"]) player.x -= player.speed;
+  if(keys["ArrowRight"] || keys["KeyD"]) player.x += player.speed;
+  if(touchActive) player.x = touchX;
+
+  player.x = clamp(player.x, player.w/2, canvas.width-player.w/2);
+
+  for(let i=bullets.length-1;i>=0;i--){ bullets[i].y -= bullets[i].speed; if(bullets[i].y<-20) bullets.splice(i,1); }
+
+  for(let i=enemies.length-1;i>=0;i--){
+    const e = enemies[i];
+    e.y += e.speed;
+    if(e.y - e.h/2 > canvas.height) gameOver=true;
+
+    for(let j=bullets.length-1;j>=0;j--){
+      const b = bullets[j];
+      if(rectOverlap(b,e)){
+        enemies.splice(i,1);
+        bullets.splice(j,1);
+        score+=10;
+        scoreHud.textContent = "Score: " + score;
+
+        // 🔊 Explosion sound
+        explosionSound.currentTime = 0;
+        explosionSound.play();
+
+        if(score > highScore){
+          highScore = score;
+          localStorage.setItem("planeHighScore", highScore);
+          highScoreHud.textContent = "High Score: " + highScore;
+        }
+        break;
+      }
+    }
+    if(rectOverlap(player,e)) gameOver=true;
+  }
+
+  if(gameOver){
+    backBtn.style.display="none";
+    bgMusic.pause(); // stop music
+  }
+}
+
+// --- Drawing ---
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const g = ctx.createLinearGradient(0,0,0,canvas.height); 
+  g.addColorStop(0,"#001"); g.addColorStop(1,"#000"); 
+  ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.drawImage(playerImg, player.x-player.w/2, player.y-player.h/2, player.w, player.h);
+  bullets.forEach(b=>ctx.drawImage(bulletImg, b.x-b.w/2, b.y-b.h/2, b.w, b.h));
+  enemies.forEach(e=>ctx.drawImage(enemyImg, e.x-e.w/2, e.y-e.h/2, e.w, e.h));
+
+  if(gameOver){
+    ctx.fillStyle="rgba(0,0,0,0.6)";
+    ctx.fillRect(0,canvas.height/2-120,canvas.width,240);
+
+    ctx.fillStyle="#fff"; 
+    ctx.font="40px Arial"; 
+    ctx.textAlign="center";
+    ctx.fillText("GAME OVER",canvas.width/2,canvas.height/2 - 40);
+
+    ctx.font="28px Arial";
+    ctx.fillText("Score: "+score, canvas.width/2, canvas.height/2);
+    ctx.fillText("High Score: "+highScore, canvas.width/2, canvas.height/2 + 40);
+
+    restartBtn.style.display="block";
+    restartBtn.style.top = (canvas.height/2 + 80) + "px";
+  }
+}
+
+// --- Utils ---
+function rectOverlap(a,b){ return Math.abs(a.x-b.x)<(a.w+b.w)/2 && Math.abs(a.y-b.y)<(a.h+b.h)/2; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+// --- Buttons ---
+playBtn.addEventListener('click', ()=>{ playBtn.style.display="none"; resetGame(); });
+restartBtn.addEventListener('click', resetGame);
+backBtn.addEventListener('click', ()=>{ paused=true; pauseMenu.style.display="flex"; bgMusic.pause(); });
+resumeBtn.addEventListener('click', ()=>{ paused=false; pauseMenu.style.display="none"; bgMusic.play(); requestAnimationFrame(loop); });
+menuRestartBtn.addEventListener('click', ()=>{ pauseMenu.style.display="none"; resetGame(); });
+exitBtn.addEventListener('click', ()=>{ pauseMenu.style.display="none"; running=false; hud.style.display="none"; backBtn.style.display="none"; home.style.display="flex"; highScoreText.textContent="High Score: "+highScore; bgMusic.pause(); });
+
+})();
+</script>
+</body> 
+</html>
